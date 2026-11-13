@@ -1,0 +1,13 @@
+{
+  "name": "storm-local",
+  "owner": {
+    "name": "James"
+  },
+  "plugins": [
+    {
+      "name": "storm",
+      "source": "./"
+    }
+  ],
+  "description": "STORM-style multi-perspective research for Claude Code (personal project, not affiliated with Stanford)."
+}

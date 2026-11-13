@@ -1,0 +1,50 @@
+{
+  "name": "storm",
+  "version": "0.1.0",
+  "description": "STORM research (Stanford OVAL): multi-perspective question asking with subagents, run in parallel or sequentially, producing a cited Wikipedia-style article.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Default mode",
+      "description": "How STORM's subagents run by default: all at once (parallel) or one after another (sequential, each sees the earlier ones' work).",
+      "options": [
+        "parallel",
+        "sequential"
+      ],
+      "default": "parallel"
+    },
+    "perspectives": {
+      "type": "number",
+      "title": "Perspectives",
+      "description": "How many expert perspectives to research the topic from (STORM's simulated conversations).",
+      "default": 4
+    },
+    "turns": {
+      "type": "number",
+      "title": "Questions per conversation",
+      "description": "How many question/answer rounds each perspective's conversation runs.",
+      "default": 4
+    },
+    "maxParallel": {
+      "type": "number",
+      "title": "Max parallel subagents",
+      "description": "The most subagents running at once in parallel mode.",
+      "default": 4
+    },
+    "outputDir": {
+      "type": "string",
+      "title": "Output folder",
+      "description": "Where runs are written, relative to the session's working directory.",
+      "default": "storm-output"
+    },
+    "model": {
+      "type": "string",
+      "title": "Subagent model",
+      "description": "Model alias or id for STORM's subagents, or inherit.",
+      "default": "inherit"
+    }
+  },
+  "license": "MIT",
+  "repository": "https://github.com/cjgl23/claude-code-storm"
+}
