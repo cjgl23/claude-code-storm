@@ -68,6 +68,8 @@ const RESEARCH_PROMPT = `You run one simulated conversation of STORM's research 
 Rules:
 - Run at most the number of rounds you are given. Stop early when the writer has nothing more worth asking.
 - Every factual sentence in an answer ends with a citation of the form [src: URL], using the exact URL of the page it came from. Never invent a URL or cite a page you did not open or see in search results. If the sources do not answer a question, the expert says so.
+- Prefer pages you opened with WebFetch. A claim known only from a search-result snippet may be cited, but say so in the sentence ("a search snippet describes...") and mark the source "snippet" in the Sources list.
+- Statements about the research itself (what the sources do not say, where they disagree, what could not be verified) carry no [src: URL]: they are your observations, not a source's.
 - If you are handed earlier conversations, Read them first and ask questions they did not already answer.
 
 Reply with only this markdown:
@@ -77,7 +79,7 @@ Reply with only this markdown:
 ### Q2: ...
 (and so on)
 ## Sources
-- <URL> | <page title> | <one line on what it supports>`
+- <URL> | <page title> | opened or snippet | <one line on what it supports>`
 
 const OUTLINE_PROMPT = `You run the outline stage of STORM.
 
@@ -96,18 +98,21 @@ const SECTION_PROMPT = `You write one section of a STORM article.
 - Read the full outline and every research conversation file you are given.
 - Write the section named in your task, following its subsection outline. Use only information found in the research files.
 - Keep every citation exactly in the form it appears in the research: [src: URL]. Each factual sentence carries at least one. Do not invent sources.
+- Cite a source only for what that source itself states. Sentences about the state of the evidence (for example "the available sources do not describe X" or "sources give differing dates") carry no citation unless a source makes that point.
+- Sources marked "snippet" in a research file's Sources list were seen only in search results. Prefer opened sources; use a snippet source only when nothing opened covers the point, and hedge the sentence ("is described as", "reportedly").
 - Write in a neutral, encyclopedic register, in full paragraphs. No lists unless the content is inherently a list.
 - If you are handed sections written earlier, Read them first, do not repeat what they cover, and keep terminology consistent with them.
 
-Reply with only the section's markdown, starting with its "## " heading.`
+Reply with only the section's markdown, starting with its "## " heading. Add nothing after the section: no notes, file lists or comments for the caller.`
 
 const POLISH_PROMPT = `You polish a STORM article draft into its final form.
 
 Read the draft file you are given, then:
 1. Write a lead section of 2-4 paragraphs summarising the whole article, placed right after the "# " title with no heading of its own. Cite it like the body.
 2. Remove content that repeats across sections; keep every piece of non-repeated content and every section.
-3. Replace each [src: URL] citation with a numbered one like [1], numbering URLs in order of first appearance; the same URL always gets the same number.
-4. End with a "## References" section listing each number with its URL (and the page title where the draft or research shows it).
+3. Replace each [src: URL] citation with a numbered one like [1], numbering URLs in order of first appearance; the same URL always gets the same number, and so do two URLs that are clearly the same page (the same title under different paths). Never put two copies of one number on a sentence.
+4. Leave uncited any sentence about the state of the evidence (what sources do not say, where they disagree); if such a sentence carries a citation the cited source does not support, remove the citation.
+5. End with a "## References" section listing each number with its URL (and the page title where the draft or research shows it).
 
 Reply with only the final article in markdown.`
 
@@ -132,6 +137,48 @@ function stamp(ms: number): string {
 function unfence(text: string): string {
   const m = text.trim().match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/)
   return (m?.[1] ?? text).trim()
+}
+
+// Drop a trailing block a subagent adds for its caller ("Notes for the caller:",
+// "Files used:") after a horizontal rule or under such a label. Article text
+// never ends that way, and the block would otherwise reach the draft.
+export function stripTrailer(text: string): string {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i > 0; i--) {
+    const line = lines[i]!.trim()
+    const isRule = /^(-{3,}|\*{3,}|_{3,})$/.test(line)
+    const isLabel = /^(\*\*)?(notes?( for the caller)?|files (used|read)|caller notes)(\*\*)?:?(\*\*)?$/i.test(line)
+    if (!isRule && !isLabel) continue
+    const rest = lines.slice(i + 1).join('\n')
+    if (/^#{1,6}\s/m.test(rest)) break
+    let cut = i
+    while (cut > 1 && /^\s*(-{3,}|\*{3,}|_{3,})?\s*$/.test(lines[cut - 1]!)) cut--
+    return lines.slice(0, cut).join('\n').trimEnd()
+  }
+  return text
+}
+
+// Two URLs for one page, such as one article filed under two site sections
+// (/arts-culture/<slug> and /innovation/<slug>): same host, same long final
+// path segment. Rewrites every [src: URL] to the first URL seen for its page.
+export function mergeSourceUrls(text: string): string {
+  const firstFor = new Map<string, string>()
+  const keyOf = (url: string): string => {
+    const m = url.match(/^https?:\/\/(?:www\.)?([^/?#]+)([^?#]*)/i)
+    if (!m) return url
+    const host = m[1]!.toLowerCase()
+    const segments = m[2]!.split('/').filter(Boolean)
+    const last = segments[segments.length - 1] ?? ''
+    // Only a distinctive slug identifies a page; short segments like "index" or "123" do not.
+    return last.length >= 16 && /[a-z]/i.test(last) && /[-_]/.test(last)
+      ? `${host}|${last.toLowerCase()}`
+      : `${host}|${m[2]!.replace(/\/+$/, '').toLowerCase()}`
+  }
+  return text.replace(/\[src:\s*([^\]\s]+)\s*\]/g, (_, url: string) => {
+    const key = keyOf(url)
+    if (!firstFor.has(key)) firstFor.set(key, url)
+    return `[src: ${firstFor.get(key)}]`
+  })
 }
 
 function asMode(value: unknown, fallback: StormMode): StormMode {
@@ -377,7 +424,8 @@ async function finish($: $, agentId: string, answer: string, ok: boolean) {
     return
   }
   if (t.status !== 'running') return
-  const text = unfence(answer)
+  const unfenced = unfence(answer)
+  const text = t.kind === 'section' || t.kind === 'polish' ? stripTrailer(unfenced) : unfenced
   const good = ok && text !== ''
   if (good) await $.fs.write(t.outputPath, text + '\n')
   await update($, runAtom, r =>
@@ -449,7 +497,9 @@ async function advance($: $) {
       error = 'every section subagent failed'
     } else {
       const parts = await Promise.all(written.map(t => $.fs.read(t.outputPath)))
-      await $.fs.write(`${run.dir}/draft.md`, `# ${run.topic}\n\n${parts.map(p => p.trim()).join('\n\n')}\n`)
+      const draft = `# ${run.topic}\n\n${parts.map(p => p.trim()).join('\n\n')}\n`
+      // Merge URLs for one page here, so the polisher numbers each source once.
+      await $.fs.write(`${run.dir}/draft.md`, mergeSourceUrls(draft))
       added = [task(run, 'polish', 0, 'Lead section, de-duplication, references', '', 'article.md')]
       next = 'polish'
     }
@@ -628,16 +678,14 @@ export const register: Register = (on, options) => {
     })
     if (started.error || !started.run) return { deny: started.error ?? 'STORM did not start.' }
     const r = started.run
+    // The host accepts a string or content blocks as a tool result, not an object.
     return {
-      result: {
-        status: 'started',
-        topic: r.topic,
-        outputDir: r.dir,
-        articlePath: `${r.dir}/article.md`,
-        researchMode: r.researchMode,
-        writingMode: r.writingMode,
-        note: 'Runs in the background. A note arrives in this conversation when the article is ready; do not poll.',
-      },
+      result: [
+        `STORM started on "${r.topic}" (research: ${r.researchMode}, writing: ${r.writingMode}, ${r.perspectives} perspectives, ${r.turns} rounds each).`,
+        `Output folder: ${r.dir}`,
+        `Article: ${r.dir}/article.md`,
+        'Runs in the background. A note arrives in this conversation when the article is ready; do not poll.',
+      ].join('\n'),
     }
   })
 

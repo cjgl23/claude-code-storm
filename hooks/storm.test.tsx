@@ -114,3 +114,39 @@ test('the pane draws the run on terminal and desktop', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('the research tool answers with text and starts a run', async ($, on) => {
+  const { spawned } = engine(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true } as any)
+  const out = await $.tool.call({ tool: 'mcp__storm__research', topic: 'Fusion', perspectives: 2, turns: 1 } as any)
+  expect(typeof out.result).toBe('string')
+  expect(out.result).toContain('STORM started on "Fusion"')
+  expect(spawned.map(s => s.type)).toEqual(['storm:perspective-finder'])
+})
+
+test('a section answer loses its notes for the caller, and one page cited under two URLs gets one', async ($, on) => {
+  const { files, spawned } = engine(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true } as any)
+  await $.command.run({ command: 'storm', args: 'Fusion --sequential --perspectives 2' } as any)
+  await end($, 'a1', PERSPECTIVES)
+  for (let i = 0; i < 2; i++) {
+    const r = spawned.filter(s => s.type === 'storm:perspective-researcher')[i]!
+    await end($, r.agentId, `## Perspective ${i}\n### Q1: q\nA [src: https://e.com/${i}]`)
+  }
+  await end($, spawned.find(s => s.type === 'storm:outline-writer')!.agentId, OUTLINE)
+  const a = 'https://www.mag.com/arts/the-legend-of-the-keyboard-4986/'
+  const b = 'https://www.mag.com/innovation/the-legend-of-the-keyboard-4986/'
+  await end(
+    $,
+    spawned.filter(s => s.type === 'storm:section-writer')[0]!.agentId,
+    `## History\nOne [src: ${a}]\n\n---\n\nNotes for the caller:\n- Files used: /w/outline.md`,
+  )
+  const section = [...files.entries()].find(([p]) => p.endsWith('/sections/01-history.md'))![1]
+  expect(section).not.toContain('Notes for the caller')
+  expect(section.trim().endsWith(`One [src: ${a}]`)).toBe(true)
+  await end($, spawned.filter(s => s.type === 'storm:section-writer')[1]!.agentId, `## Physics\nTwo [src: ${b}] [src: https://e.com/9]`)
+  const draft = [...files.entries()].find(([p]) => p.endsWith('/draft.md'))![1]
+  expect(draft).not.toContain('/innovation/')
+  expect(draft).toContain(`Two [src: ${a}]`)
+  expect(draft).toContain('[src: https://e.com/9]')
+})
