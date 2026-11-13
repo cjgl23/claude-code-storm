@@ -1,6 +1,6 @@
 {
   "name": "storm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "STORM research (Stanford OVAL): multi-perspective question asking with subagents, run in parallel or sequentially, producing a cited Wikipedia-style article.",
   "types": "./types/index.d.ts",
   "userConfig": {
